@@ -1,7 +1,7 @@
 {
-  "name": "discord-ticket-bot",
+  "name": "discord-ticket-bot-hood",
   "version": "1.0.0",
-  "description": "Discord ticket system bot with staff notifications and owner-only commands.",
+  "description": "Hood Customs support ticket bot",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
