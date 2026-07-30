@@ -82,29 +82,30 @@ async function fetchAllMessages(channel) {
   return all.reverse();
 }
 
-function buildTranscriptHtml(channel, messages) {
-  const title = `Transcript for #${escapeHtml(channel.name)}`;
-  const rows = messages.map((m) => {
-    const authorName = escapeHtml(m.member?.displayName || m.author?.username || 'Unknown User');
-    const authorTag = escapeHtml(m.author?.tag || `${m.author?.username || 'Unknown User'}#0000`);
-    const authorId = escapeHtml(m.author?.id || 'unknown');
-    const ts = escapeHtml(m.createdAt.toISOString());
-    const content = escapeHtml(m.content || m.cleanContent || '');
-    const attachments = m.attachments.map((a) => `<div class="attachment"><a href="${escapeHtml(a.url)}">${escapeHtml(a.name)}</a></div>`).join('');
-    const embeds = m.embeds.map((embed) => `<div class="embed"><strong>Embed</strong><div>${escapeHtml(embed.description || embed.title || 'Embed content')}</div></div>`).join('');
-    return `<div class="message"><div class="message-header"><span class="author">${authorName}</span> <span class="tag">${authorTag}</span> <span class="id">(${authorId})</span> <span class="timestamp">${ts}</span></div><div class="message-content">${content || '<em>No text content</em>'}</div>${attachments}${embeds}</div>`;
-  }).join('');
-
-  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title><style>body{background:#0b0d12;color:#e3e5e8;font-family:Arial, sans-serif;padding:24px}h1{margin-bottom:8px}.message{border-bottom:1px solid #212529;margin-bottom:16px;padding-bottom:12px}.message-header{font-size:.95rem;margin-bottom:6px;color:#adbac7}.author{font-weight:700;color:#f0f6fc}.tag,.id,.timestamp{color:#8f959e}.message-content{white-space:pre-wrap;margin-bottom:6px}.attachment a{color:#58a6ff;text-decoration:none}.embed{margin-top:8px;padding:8px;border:1px solid #2f3136;border-radius:4px;background:#16181d}</style></head><body><h1>${title}</h1><div class="meta">Channel: #${escapeHtml(channel.name)} | Created at: ${escapeHtml(channel.createdAt.toISOString())}</div>${rows}</body></html>`;
+function buildTranscriptText(channel, messages) {
+  // Build a plain-text transcript: one message per line with timestamp, author tag, id, and content.
+  const lines = messages.map((m) => {
+    const ts = m.createdAt ? m.createdAt.toISOString() : new Date().toISOString();
+    const authorTag = m.author?.tag || `${m.author?.username || 'Unknown User'}#0000`;
+    const authorId = m.author?.id || 'unknown';
+    const content = m.content || m.cleanContent || '';
+    const attachments = m.attachments.size
+      ? m.attachments.map(a => `\n[Attachment] ${a.name}: ${a.url}`).join('')
+      : '';
+    // Escape any leading markup to avoid Discord previewing as HTML when possible
+    const safeContent = content.replace(/^\s+/, '');
+    return `[${ts}] ${authorTag} (${authorId}): ${safeContent}${attachments}`;
+  });
+  return lines.join('\n');
 }
 
 async function createTranscriptFile(channel) {
   ensureTranscriptDirectory();
   const messages = await fetchAllMessages(channel);
-  const fileName = `transcript-${sanitizeFileName(channel.name)}-${channel.id}.html`;
+  const text = buildTranscriptText(channel, messages);
+  const fileName = `transcript-${sanitizeFileName(channel.name)}-${channel.id}.txt`;
   const filePath = path.join(TRANSCRIPT_DIRECTORY, fileName);
-  const html = buildTranscriptHtml(channel, messages);
-  await fs.promises.writeFile(filePath, html, 'utf8');
+  await fs.promises.writeFile(filePath, text, 'utf8');
   return { filePath, fileName };
 }
 
@@ -215,12 +216,20 @@ client.on('messageCreate', async (message) => {
         return message.channel.send('Only the ticket owner or staff can add members to this ticket.');
       }
 
-      const targetUserId = message.mentions.users.first()?.id || args.match(/\d{17,19}/)?.[0];
+      const targetUserId = message.mentions.users.first()?.id || args.match(/\d{17,20}/)?.[0];
       if (!targetUserId) {
         return message.channel.send('Please mention a user or provide a Discord user ID.');
       }
 
+      // Check bot permissions
+      const me = message.guild.members.me;
+      if (!me.permissionsIn(message.channel).has(PermissionFlagsBits.ManageChannels)) {
+        return message.channel.send('I need the Manage Channels permission to modify ticket members.');
+      }
+
       try {
+        // Ensure the user exists in the guild where possible (not required to set overwrite)
+        await message.guild.members.fetch(targetUserId).catch(() => null);
         await message.channel.permissionOverwrites.edit(targetUserId, {
           ViewChannel: true,
           SendMessages: true,
@@ -229,7 +238,7 @@ client.on('messageCreate', async (message) => {
         return message.channel.send(`Added <@${targetUserId}> to this ticket.`);
       } catch (error) {
         console.error('Failed to add member to ticket:', error);
-        return message.channel.send('I could not add that user to this ticket.');
+        return message.channel.send(`I could not add that user to this ticket: ${error.message}`);
       }
     }
 
@@ -238,7 +247,7 @@ client.on('messageCreate', async (message) => {
         return message.channel.send('Only the ticket owner or staff can remove members from this ticket.');
       }
 
-      const targetUserId = message.mentions.users.first()?.id || args.match(/\d{17,19}/)?.[0];
+      const targetUserId = message.mentions.users.first()?.id || args.match(/\d{17,20}/)?.[0];
       if (!targetUserId) {
         return message.channel.send('Please mention a user or provide a Discord user ID.');
       }
@@ -247,7 +256,13 @@ client.on('messageCreate', async (message) => {
         return message.channel.send('You cannot remove the ticket owner from this ticket.');
       }
 
+      const me = message.guild.members.me;
+      if (!me.permissionsIn(message.channel).has(PermissionFlagsBits.ManageChannels)) {
+        return message.channel.send('I need the Manage Channels permission to modify ticket members.');
+      }
+
       try {
+        // First attempt to set explicit denies
         await message.channel.permissionOverwrites.edit(targetUserId, {
           ViewChannel: false,
           SendMessages: false,
@@ -255,8 +270,15 @@ client.on('messageCreate', async (message) => {
         });
         return message.channel.send(`Removed <@${targetUserId}> from this ticket.`);
       } catch (error) {
-        console.error('Failed to remove member from ticket:', error);
-        return message.channel.send('I could not remove that user from this ticket.');
+        console.error('Failed to remove member from ticket (edit):', error);
+        try {
+          // Fallback: delete the overwrite entry
+          await message.channel.permissionOverwrites.delete(targetUserId);
+          return message.channel.send(`Removed <@${targetUserId}> from this ticket.`);
+        } catch (err) {
+          console.error('Failed to remove member from ticket (delete):', err);
+          return message.channel.send(`I could not remove that user from this ticket: ${err.message}`);
+        }
       }
     }
 
