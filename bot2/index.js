@@ -189,9 +189,12 @@ client.on('shardError', (error) => {
 client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
   if (!message.guild || message.guild.id !== HOME_GUILD_ID) return;
-  const content = message.content.trim().toLowerCase();
 
-  if (content === '$setup') {
+  const trimmed = message.content.trim();
+  const command = trimmed.split(/\s+/)[0].toLowerCase();
+  const args = trimmed.slice(command.length).trim();
+
+  if (command === '$setup') {
     if (message.author.id !== SETUP_USER_ID) return;
     const target = await message.guild.channels.fetch(PANEL_CHANNEL_ID).catch(() => null);
     if (!target) return message.channel.send('Setup target channel not found.');
@@ -199,7 +202,7 @@ client.on('messageCreate', async (message) => {
     return;
   }
 
-  if (content === '$add' || content === '$close' || content === '$delete') {
+  if (command === '$add' || command === '$remove' || command === '$close' || command === '$delete') {
     const ownerMatch = message.channel.topic ? message.channel.topic.match(/ticketOwner:(\d+)/) : null;
     if (!ownerMatch) {
       console.warn(`Command used in non-ticket channel: ${message.channel.id}`);
@@ -207,31 +210,57 @@ client.on('messageCreate', async (message) => {
     }
     const ownerId = ownerMatch[1];
 
-    if (content === '$add') {
+    if (command === '$add') {
       if (!isStaff(message.member) && message.author.id !== ownerId) {
         return message.channel.send('Only the ticket owner or staff can add members to this ticket.');
       }
 
-      const targetUser = message.mentions.users.first() || message.content.match(/\d{15,20}/)?.[0];
-      if (!targetUser) {
+      const targetUserId = message.mentions.users.first()?.id || args.match(/\d{17,19}/)?.[0];
+      if (!targetUserId) {
         return message.channel.send('Please mention a user or provide a Discord user ID.');
       }
 
-      const resolvedUserId = typeof targetUser === 'string' ? targetUser : targetUser;
       try {
-        await message.channel.permissionOverwrites.edit(resolvedUserId, {
+        await message.channel.permissionOverwrites.edit(targetUserId, {
           ViewChannel: true,
           SendMessages: true,
           ReadMessageHistory: true,
         });
-        return message.channel.send(`Added <@${resolvedUserId}> to this ticket.`);
+        return message.channel.send(`Added <@${targetUserId}> to this ticket.`);
       } catch (error) {
         console.error('Failed to add member to ticket:', error);
         return message.channel.send('I could not add that user to this ticket.');
       }
     }
 
-    if (content === '$close') {
+    if (command === '$remove') {
+      if (!isStaff(message.member) && message.author.id !== ownerId) {
+        return message.channel.send('Only the ticket owner or staff can remove members from this ticket.');
+      }
+
+      const targetUserId = message.mentions.users.first()?.id || args.match(/\d{17,19}/)?.[0];
+      if (!targetUserId) {
+        return message.channel.send('Please mention a user or provide a Discord user ID.');
+      }
+
+      if (targetUserId === ownerId) {
+        return message.channel.send('You cannot remove the ticket owner from this ticket.');
+      }
+
+      try {
+        await message.channel.permissionOverwrites.edit(targetUserId, {
+          ViewChannel: false,
+          SendMessages: false,
+          ReadMessageHistory: false,
+        });
+        return message.channel.send(`Removed <@${targetUserId}> from this ticket.`);
+      } catch (error) {
+        console.error('Failed to remove member from ticket:', error);
+        return message.channel.send('I could not remove that user from this ticket.');
+      }
+    }
+
+    if (command === '$close') {
       const transcriptUrl = await sendTranscriptLog(message.channel).catch(() => null);
       await message.channel.permissionOverwrites.edit(ownerId, { ViewChannel: false }).catch(() => {});
       await message.channel.setName('closed-ticket').catch(() => {});
@@ -239,7 +268,7 @@ client.on('messageCreate', async (message) => {
       return;
     }
 
-    if (content === '$delete') {
+    if (command === '$delete') {
       if (message.author.id === ownerId) return message.channel.send('Ticket owners are not allowed to delete the ticket.');
       if (!isStaff(message.member)) return message.channel.send('You must be staff to delete a ticket.');
       const transcriptUrl = await sendTranscriptLog(message.channel).catch(() => null);
