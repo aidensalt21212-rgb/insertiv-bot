@@ -4,7 +4,9 @@
   "description": "Discord ticket system bot with staff notifications and owner-only commands.",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js"
+    "start": "node bot2/index.js",
+    "start:bot1": "node index.js",
+    "start:bot2": "node bot2/index.js"
   },
   "author": "",
   "license": "MIT",

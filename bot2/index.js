@@ -157,7 +157,7 @@ function buildTicketSelectMenu() {
 }
 
 function ticketChannelNameFor(option) {
-  return option.toLowerCase().replace(/\\s+/g, '-');
+  return option.toLowerCase().replace(/\s+/g, '-');
 }
 
 function isStaff(member) {
@@ -167,12 +167,20 @@ function isStaff(member) {
 
 client.once('ready', () => {
   console.log(`Logged in as ${client.user.tag}`);
-  // set presence to the invite link
   try {
     client.user.setPresence({ activities: [{ name: 'discord.gg/hoodcustoms' }], status: 'online' });
+    console.log('Presence set to discord.gg/hoodcustoms');
   } catch (e) {
     console.warn('Failed to set presence', e);
   }
+});
+
+client.on('error', (error) => {
+  console.error('Client error:', error);
+});
+
+client.on('shardError', (error) => {
+  console.error('Shard error:', error);
 });
 
 client.on('messageCreate', async (message) => {
@@ -189,8 +197,11 @@ client.on('messageCreate', async (message) => {
   }
 
   if (content === '$close' || content === '$delete') {
-    const ownerMatch = message.channel.topic ? message.channel.topic.match(/ticketOwner:(\\d+)/) : null;
-    if (!ownerMatch) return;
+    const ownerMatch = message.channel.topic ? message.channel.topic.match(/ticketOwner:(\d+)/) : null;
+    if (!ownerMatch) {
+      console.warn(`Command used in non-ticket channel: ${message.channel.id}`);
+      return message.channel.send('This channel is not a ticket.');
+    }
     const ownerId = ownerMatch[1];
 
     if (content === '$close') {
@@ -261,13 +272,34 @@ client.on('interactionCreate', async (interaction) => {
   await interaction.reply({ content: `Your ticket has been created in <#${channel.id}>.`, ephemeral: true });
 });
 
-// Prefer DISCORD_TOKEN2 for this service, but fall back to DISCORD_TOKEN if not set
-let token = process.env.DISCORD_TOKEN2 || process.env.DISCORD_TOKEN;
-if (!token) {
-  try { token = require('./token.js'); } catch (e) { token = null; }
+function resolveToken() {
+  if (process.env.DISCORD_TOKEN2) {
+    console.log('Using token source: DISCORD_TOKEN2');
+    return process.env.DISCORD_TOKEN2;
+  }
+  if (process.env.DISCORD_TOKEN) {
+    console.log('Using token source: DISCORD_TOKEN');
+    return process.env.DISCORD_TOKEN;
+  }
+  try {
+    const localToken = require('./token.js');
+    if (localToken) {
+      console.log('Using token source: local token.js');
+      return localToken;
+    }
+  } catch (error) {
+    console.warn('Unable to load local token.js', error);
+  }
+  return null;
 }
+
+const token = resolveToken();
 if (!token) {
   console.error('Missing token. Set DISCORD_TOKEN2 (recommended) or DISCORD_TOKEN in env, or put token in token.js (not recommended).');
   process.exit(1);
 }
-client.login(token);
+
+client.login(token).catch((error) => {
+  console.error('Failed to login:', error);
+  process.exit(1);
+});
