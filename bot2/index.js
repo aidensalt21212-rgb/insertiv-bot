@@ -84,15 +84,18 @@ async function fetchAllMessages(channel) {
 
 function buildTranscriptHtml(channel, messages) {
   const title = `Transcript for #${escapeHtml(channel.name)}`;
-  const rows = messages.map(m => {
-    const author = escapeHtml(m.author.tag);
+  const rows = messages.map((m) => {
+    const authorName = escapeHtml(m.member?.displayName || m.author?.username || 'Unknown User');
+    const authorTag = escapeHtml(m.author?.tag || `${m.author?.username || 'Unknown User'}#0000`);
+    const authorId = escapeHtml(m.author?.id || 'unknown');
     const ts = escapeHtml(m.createdAt.toISOString());
-    const content = escapeHtml(m.content || '');
-    const attachments = m.attachments.map(a => `<div class="attachment"><a href="${escapeHtml(a.url)}">${escapeHtml(a.name)}</a></div>`).join('');
-    return `<div class="message"><div class="message-header"><span class="author">${author}</span> <span class="timestamp">${ts}</span></div><div class="message-content">${content || '<em>No text content</em>'}</div>${attachments}</div>`;
+    const content = escapeHtml(m.content || m.cleanContent || '');
+    const attachments = m.attachments.map((a) => `<div class="attachment"><a href="${escapeHtml(a.url)}">${escapeHtml(a.name)}</a></div>`).join('');
+    const embeds = m.embeds.map((embed) => `<div class="embed"><strong>Embed</strong><div>${escapeHtml(embed.description || embed.title || 'Embed content')}</div></div>`).join('');
+    return `<div class="message"><div class="message-header"><span class="author">${authorName}</span> <span class="tag">${authorTag}</span> <span class="id">(${authorId})</span> <span class="timestamp">${ts}</span></div><div class="message-content">${content || '<em>No text content</em>'}</div>${attachments}${embeds}</div>`;
   }).join('');
 
-  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title><style>body{background:#0b0d12;color:#e3e5e8;font-family:Arial, sans-serif;padding:24px}h1{margin-bottom:8px}.message{border-bottom:1px solid #212529;margin-bottom:16px;padding-bottom:12px}.message-header{font-size:.95rem;margin-bottom:6px;color:#adbac7}.author{font-weight:700;color:#f0f6fc}.timestamp{color:#8f959e}.message-content{white-space:pre-wrap;margin-bottom:6px}.attachment a{color:#58a6ff;text-decoration:none}</style></head><body><h1>${title}</h1><div class="meta">Channel: #${escapeHtml(channel.name)} | Created at: ${escapeHtml(channel.createdAt.toISOString())}</div>${rows}</body></html>`;
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title><style>body{background:#0b0d12;color:#e3e5e8;font-family:Arial, sans-serif;padding:24px}h1{margin-bottom:8px}.message{border-bottom:1px solid #212529;margin-bottom:16px;padding-bottom:12px}.message-header{font-size:.95rem;margin-bottom:6px;color:#adbac7}.author{font-weight:700;color:#f0f6fc}.tag,.id,.timestamp{color:#8f959e}.message-content{white-space:pre-wrap;margin-bottom:6px}.attachment a{color:#58a6ff;text-decoration:none}.embed{margin-top:8px;padding:8px;border:1px solid #2f3136;border-radius:4px;background:#16181d}</style></head><body><h1>${title}</h1><div class="meta">Channel: #${escapeHtml(channel.name)} | Created at: ${escapeHtml(channel.createdAt.toISOString())}</div>${rows}</body></html>`;
 }
 
 async function createTranscriptFile(channel) {
@@ -205,9 +208,8 @@ client.on('messageCreate', async (message) => {
     const ownerId = ownerMatch[1];
 
     if (content === '$close') {
-      if (message.author.id !== ownerId) return message.channel.send('Only the ticket owner can close this ticket.');
       const transcriptUrl = await sendTranscriptLog(message.channel).catch(() => null);
-      await message.channel.permissionOverwrites.edit(ownerId, { ViewChannel: false });
+      await message.channel.permissionOverwrites.edit(ownerId, { ViewChannel: false }).catch(() => {});
       await message.channel.setName('closed-ticket').catch(() => {});
       await message.channel.send({ embeds: [buildCloseEmbed(transcriptUrl)] });
       return;
